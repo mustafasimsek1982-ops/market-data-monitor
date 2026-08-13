@@ -1,0 +1,40 @@
+name: BIST Tarama
+
+on:
+  schedule:
+    - cron: "2,17,32,47 7-14 * * 1-5"
+    - cron: "2 15 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: bist-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - uses: actions/cache/restore@v4
+        with:
+          path: .bist-signal-state.json
+          key: bist-signal-state-${{ github.run_id }}
+          restore-keys: bist-signal-state-
+      - run: python bist_scanner.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MANUAL_TEST: ${{ github.event_name == 'workflow_dispatch' }}
+          BIST_BATCH_SIZE: "60"
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .bist-signal-state.json
+          key: bist-signal-state-${{ github.run_id }}
