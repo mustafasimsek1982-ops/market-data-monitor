@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -143,17 +144,29 @@ def load_state(path: Path) -> set[str]:
 
 
 def main() -> None:
+    if os.getenv("MANUAL_TEST", "").lower() == "true":
+        send_telegram("✅ Market Data Monitor bağlantı testi başarılı. Otomatik Binance taraması etkin.")
+        return
+
     now = datetime.now(timezone.utc)
     intervals = due_intervals(now)
     if not intervals:
         return
     state_path = Path(os.getenv("SIGNAL_STATE_FILE", ".signal-state.json"))
     sent = load_state(state_path)
-    for symbol in active_usdt_symbols():
-        for interval in intervals:
+    def analyze(symbol: str, interval: str):
+        df = closed_klines(symbol, interval)
+        return symbol, interval, df, evaluate(df, interval)
+
+    candidates = [(symbol, interval) for symbol in active_usdt_symbols() for interval in intervals]
+    workers = min(int(os.getenv("MAX_WORKERS", "12")), len(candidates))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(analyze, symbol, interval): (symbol, interval)
+                   for symbol, interval in candidates}
+        for future in as_completed(futures):
+            symbol, interval = futures[future]
             try:
-                df = closed_klines(symbol, interval)
-                checks = evaluate(df, interval)
+                symbol, interval, df, checks = future.result()
                 candle = int(df.open_time.iloc[-1])
                 key = f"{symbol}:{interval}:{candle}"
                 if checks["matched"] and key not in sent:
